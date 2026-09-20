@@ -50,13 +50,15 @@ async function reportSpan(span) {
  * not a guess). Safe no-op if X-Ray isn't active for this invocation.
  */
 function annotateXRaySegment(traceId) {
-  try {
-    const segment = AWSXRay.getSegment();
-    if (segment && traceId) segment.addAnnotation("vaporTraceId", traceId);
-  } catch (e) {
-    console.error("[vaportrace-sdk] X-Ray annotation failed (non-fatal):", e.message);
+    if (!traceId) return;
+    try {
+      AWSXRay.captureFunc("vaportrace-annotation", (subsegment) => {
+        subsegment.addAnnotation("vaporTraceId", traceId);
+      });
+    } catch (e) {
+      console.error("[vaportrace-sdk] X-Ray annotation failed (non-fatal):", e.message);
+    }
   }
-}
 
 /**
  * Extracts a trace ID from whatever triggered this invocation.

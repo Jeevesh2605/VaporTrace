@@ -1,6 +1,6 @@
 {
   "name": "vaportrace",
-  "version": "0.1.3",
+  "version": "0.1.6",
   "bin": {
     "vaportrace": "bin/vaportrace.js"
   },

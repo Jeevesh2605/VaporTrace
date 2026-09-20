@@ -16,7 +16,7 @@ it runs on your machine and streams your own private cloud activity to you
 Before using this CLI, you need the VaporTrace AWS infrastructure deployed
 in your own account (EventBridge, the traced Lambdas, and the IoT Core
 tunnel). See the full setup guide:
-👉 [github.com/\<your-username\>/CloudTrace](https://github.com/<your-username>/CloudTrace)
+👉 👉 [VaporTrace on GitHub](https://github.com/Jeevesh2605/VaporTrace)
 
 You'll also need Node.js 18 or later.
 
@@ -64,7 +64,7 @@ This starts:
 - an `/resubmit` endpoint the dashboard uses to push edited payloads
   back into your EventBridge bus
 
-Then run the [VaporTrace dashboard](https://github.com/<your-username>/CloudTrace/tree/main/packages/dashboard)
+Then run the [VaporTrace dashboard](https://github.com/Jeevesh2605/VaporTrace/tree/main/packages/dashboard)
 separately and open `http://localhost:3000` to watch traces live.
 
 ## Configuration
