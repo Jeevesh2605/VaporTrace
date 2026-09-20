@@ -111,4 +111,4 @@ and code review.
 
 - **Repository:** https://github.com/Jeevesh2605/VaporTrace
 - **npm package:** https://www.npmjs.com/package/vaportrace
-- **Demo video:** <add your YouTube link here>
+- **Demo video:** https://youtu.be/QxmcdRRcWO0
