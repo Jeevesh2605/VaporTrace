@@ -1,35 +1,70 @@
-# vaportrace
+# VaporTrace
+
+[![npm version](https://img.shields.io/npm/v/vaportrace.svg)](https://www.npmjs.com/package/vaportrace)
 
 **Real-time cloud event debugger for AWS — like ngrok, but for AWS events.**
 
-`vaportrace` is a CLI that tunnels live execution traces from your AWS
-account to a local dashboard, so you can watch an event-driven pipeline
-run in real time and see exactly where it fails — without digging through
-CloudWatch.
+VaporTrace streams live execution traces from your AWS account straight to a
+local dashboard, so you can watch an event-driven pipeline execute in real
+time, see exactly where it fails, and fix + resubmit the corrected payload —
+all without leaving your terminal.
 
-It connects to **your own AWS account**. Like `ngrok` or the AWS SAM CLI,
-it runs on your machine and streams your own private cloud activity to you
-— there's no shared or hosted version.
+![VaporTrace architecture](./architecture.svg)
 
-## Prerequisites
+## Why
 
-Before using this CLI, you need the VaporTrace AWS infrastructure deployed
-in your own account (EventBridge, the traced Lambdas, and the IoT Core
-tunnel). See the full setup guide:
-👉 👉 [VaporTrace on GitHub](https://github.com/Jeevesh2605/VaporTrace)
+Debugging a serverless pipeline usually means opening five CloudWatch log
+groups, lining up timestamps by hand, and guessing which invocation caused
+which failure. VaporTrace replaces that with one correlated view: every hop
+a single event takes, drawn as a live waterfall, with the real error message
+and stack trace one click away.
 
-You'll also need Node.js 18 or later.
+It's built on a lightweight trace/span model — the same conceptual shape as
+OpenTelemetry (trace → spans → status → duration) — plus real AWS X-Ray
+annotations for independent verification on Lambda-based services.
 
-## Install
+## What it looks like
+
+- A live graph of every service an event passed through, updating in
+  real time as it happens
+- Failed spans shown in red, with the exact error and stack trace
+- An **Edit & Resubmit** flow: fix a bad payload right in the dashboard and
+  push it back into the pipeline without touching the AWS console
+- Every retry is linked back to the trace it's fixing, so you can see the
+  whole story — failed, fixed, resolved
+
+## How it works
+
+1. **S3** receives an upload and fires an event
+2. **EventBridge** (with Archive + Replay enabled) routes it to two Lambdas
+3. **Forwarder Lambda** relays the raw event and reports a span
+4. **Processor Lambda** runs your business logic and reports its own span —
+   success or failure
+5. Both publish over **IoT Core** (MQTT), which tunnels straight to your
+   machine
+6. The **VaporTrace CLI** picks it up and streams it to your **local
+   dashboard** over Server-Sent Events
+
+Nothing is guessed. Every span is either a real measured Lambda execution,
+or clearly labeled `(estimated)` when it represents a managed service (like
+S3 or EventBridge itself) that can't run custom code.
+
+## Getting started
+
+### 1. Deploy the AWS infrastructure
 
 ```bash
-npm install -g vaportrace
+git clone https://github.com/<your-username>/CloudTrace.git
+cd CloudTrace/packages/infra
+npm install
+cdk bootstrap aws://<your-account-id>/<your-region>
+cdk deploy
 ```
 
-## One-time setup
+This creates the S3 bucket, EventBridge bus, both Lambdas, and the IoT Core
+tunnel in your own AWS account.
 
-Provision a local MQTT certificate so the CLI can connect to your IoT Core
-tunnel:
+### 2. Provision your local MQTT credentials (one-time)
 
 ```bash
 mkdir -p ~/.vaportrace/certs && cd ~/.vaportrace/certs
@@ -48,41 +83,32 @@ curl -o AmazonRootCA1.pem https://www.amazontrust.com/repository/AmazonRootCA1.p
 aws iot describe-endpoint --endpoint-type iot:Data-ATS
 ```
 
-Copy the endpoint hostname printed by the last command — you'll need it below.
+Copy the endpoint hostname printed by the last command — you'll need it next.
 
-## Usage
+### 3. Install and run the CLI
 
 ```bash
-export VAPORTRACE_IOT_ENDPOINT=<your-endpoint-from-setup>
+npm install -g vaportrace
+export VAPORTRACE_IOT_ENDPOINT=<the endpoint from step 2>
 vaportrace start
 ```
 
-This starts:
-- an MQTT client, subscribed to your IoT Core tunnel
-- a local server at `http://localhost:4000`, streaming events over
-  Server-Sent Events for the dashboard
-- an `/resubmit` endpoint the dashboard uses to push edited payloads
-  back into your EventBridge bus
+📦 [vaportrace on npm](https://www.npmjs.com/package/vaportrace)
 
-Then run the [VaporTrace dashboard](https://github.com/Jeevesh2605/VaporTrace/tree/main/packages/dashboard)
-separately and open `http://localhost:3000` to watch traces live.
+### 4. Run the dashboard
 
-## Configuration
+```bash
+cd CloudTrace/packages/dashboard
+npm install
+npm run dev
+```
 
-| Environment variable | Required | Description |
-|---|---|---|
-| `VAPORTRACE_IOT_ENDPOINT` | Yes | Your account's IoT Core Data-ATS endpoint |
-| `PORT` | No | Local server port (default `4000`) |
-| `AWS_REGION` | Yes | Must match the region you deployed the infra to |
+Open `http://localhost:3000`, then upload a file to the S3 bucket created in
+step 1. Watch it trace live.
 
-Standard AWS credential resolution applies (`~/.aws/credentials`, env vars,
-or an SSO profile) — the CLI needs permission to call EventBridge
-(`PutEvents`) and X-Ray (`GetServiceGraph`, `GetTraceSummaries`).
+## Extending this to your own project
 
-## Extending this to your own Lambdas
-
-Any Lambda becomes traceable by VaporTrace with one line, using the SDK
-included in the infra repo:
+Any Lambda becomes traceable with one line:
 
 ```js
 const { withVaporTrace } = require("./vaportrace-sdk");
@@ -91,6 +117,42 @@ exports.handler = withVaporTrace("MyService", async (event, context) => {
   // your existing code, unchanged
 });
 ```
+
+For a non-Lambda service (ECS, a worker process), use `traceOperation()`
+from the same SDK file. The only thing you add per hop is the trace ID
+itself — carried forward via an EventBridge event's `id`, an SQS message
+attribute, or S3 object metadata, depending on what's connecting the two
+services.
+
+## Project structure
+
+```
+packages/
+  infra/       AWS CDK stack — S3, EventBridge, Lambdas, IoT Core
+  cli/         Local CLI — MQTT client, SSE server, resubmit endpoint
+  dashboard/   Next.js dashboard — live trace waterfall, span inspector
+```
+
+## Known limitations
+
+- X-Ray verification only applies to Lambda-based services with active
+  tracing enabled, and can lag 30–90 seconds behind real time due to AWS's
+  own trace indexing.
+- Trace correlation across non-Lambda hops (SQS, ECS, DynamoDB) requires
+  explicitly propagating the trace ID at that hop — it isn't automatic.
+- The dashboard and CLI run locally, by design — like `ngrok` or the AWS
+  SAM CLI, VaporTrace connects to *your* AWS account and streams *your*
+  private event data to *your* machine. There's intentionally no hosted,
+  multi-tenant version.
+
+## Built with
+
+AWS CDK, EventBridge, Lambda, S3, IoT Core, AWS X-Ray, Next.js, React Flow.
+Published as a standalone [npm package](https://www.npmjs.com/package/vaportrace)
+so anyone can install and run it against their own AWS account.
+
+Built with the help of Claude (Anthropic) for architecture discussion,
+debugging, and code review throughout.
 
 ## License
 
